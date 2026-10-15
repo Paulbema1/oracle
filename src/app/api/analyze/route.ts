@@ -129,7 +129,7 @@ async function callModel(
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "https://oracle-terminal.local",
-        "X-Title": "ORACLE — Analyse IA de marché",
+        "X-Title": "ORACLE - AI market analysis",
       },
       body: JSON.stringify({
         model,
@@ -166,7 +166,10 @@ async function callModel(
     return { ok: true, content };
   } catch (e) {
     clearTimeout(timer);
-    const msg = e instanceof Error && e.name === "AbortError" ? "Délai dépassé" : "Réseau injoignable";
+    const msg =
+      e instanceof Error && e.name === "AbortError"
+        ? "Délai dépassé"
+        : `Appel impossible : ${e instanceof Error ? e.message : "erreur réseau"}`;
     return { ok: false, status: null, message: msg };
   }
 }
@@ -334,4 +337,5 @@ Lis l'échelle de prix visible sur le graphique (axe de droite) pour donner des 
   }
 
   return NextResponse.json(plan);
-}
+            }
+        
