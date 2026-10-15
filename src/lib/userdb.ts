@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS analyses (
   last_price double precision,
   resumer_tendance text DEFAULT '',
   contexte text DEFAULT '',
-  analyse text DEFAULT '',
+  "analyse" text DEFAULT '',
   invalidation text DEFAULT '',
   niveaux_cles jsonb DEFAULT '[]'::jsonb,
   confluences jsonb DEFAULT '[]'::jsonb,
