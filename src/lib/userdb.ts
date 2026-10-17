@@ -30,14 +30,48 @@ CREATE TABLE IF NOT EXISTS analyses (
   notional double precision,
   market_source text,
   last_price double precision,
+  strategie text DEFAULT '',
+  regime text DEFAULT '',
+  confirmation_mtf text DEFAULT '',
+  alerte_macro text,
+  risque_env text DEFAULT 'modéré',
+  htf_trends jsonb DEFAULT '[]'::jsonb,
+  macro_events jsonb DEFAULT '[]'::jsonb,
+  macro_headlines jsonb DEFAULT '[]'::jsonb,
   resumer_tendance text DEFAULT '',
   contexte text DEFAULT '',
-  analyse text DEFAULT '',
+  "analyse" text DEFAULT '',
   invalidation text DEFAULT '',
   niveaux_cles jsonb DEFAULT '[]'::jsonb,
   confluences jsonb DEFAULT '[]'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 )`;
+
+/** Migration douce pour les tables déjà créées chez l'utilisateur. */
+export const MIGRATIONS = [
+  `ALTER TABLE analyses ADD COLUMN IF NOT EXISTS strategie text DEFAULT ''`,
+  `ALTER TABLE analyses ADD COLUMN IF NOT EXISTS regime text DEFAULT ''`,
+  `ALTER TABLE analyses ADD COLUMN IF NOT EXISTS confirmation_mtf text DEFAULT ''`,
+  `ALTER TABLE analyses ADD COLUMN IF NOT EXISTS alerte_macro text`,
+  `ALTER TABLE analyses ADD COLUMN IF NOT EXISTS risque_env text DEFAULT 'modéré'`,
+  `ALTER TABLE analyses ADD COLUMN IF NOT EXISTS htf_trends jsonb DEFAULT '[]'::jsonb`,
+  `ALTER TABLE analyses ADD COLUMN IF NOT EXISTS macro_events jsonb DEFAULT '[]'::jsonb`,
+  `ALTER TABLE analyses ADD COLUMN IF NOT EXISTS macro_headlines jsonb DEFAULT '[]'::jsonb`,
+  `ALTER TABLE analyses ADD COLUMN IF NOT EXISTS market_source text`,
+  `ALTER TABLE analyses ADD COLUMN IF NOT EXISTS last_price double precision`,
+];
+
+/** Crée la table si besoin puis applique les migrations douces. */
+export async function ensureSchema(pool: Pool): Promise<void> {
+  await pool.query(DDL);
+  for (const sql of MIGRATIONS) {
+    try {
+      await pool.query(sql);
+    } catch {
+      /* colonne déjà synchronisée */
+    }
+  }
+}
 
 const pools = new Map<string, { pool: Pool; db: NodePgDatabase; ready: Promise<void> }>();
 
@@ -62,9 +96,7 @@ export function getUserDb(rawUrl: string): { db: NodePgDatabase; ready: Promise<
       ssl: /localhost|127\.0\.0\.1/.test(url) ? undefined : { rejectUnauthorized: false },
     });
     const db = drizzle(pool);
-    const ready = (async () => {
-      await pool.query(DDL);
-    })();
+    const ready = ensureSchema(pool);
     entry = { pool, db, ready };
     pools.set(url, entry);
     // Échec (ex. Neon en réveil) : on oublie ce pool pour que la prochaine requête réessaie.

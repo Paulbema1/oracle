@@ -91,7 +91,7 @@ const KRAKEN_INTERVAL: Record<string, { interval: number; aggregate?: number }> 
 };
 
 /** BTCUSDT → XBTUSD, ETHUSDT → ETHUSD… */
-function krakenPair(flat: string): string | null {
+export function krakenPair(flat: string): string | null {
   if (!/^[A-Z0-9]{4,20}$/.test(flat)) return null;
   let base: string | null = null;
   for (const q of ["USDT", "USDC"]) {

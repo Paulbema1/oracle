@@ -10,7 +10,16 @@ import HistoryPanel from "@/components/history-panel";
 import { captureTradingChart } from "@/lib/render-chart";
 import { authHeaders, setToken } from "@/lib/client-auth";
 import type { AnalysisRow } from "@/db/schema";
-import type { Direction, MarketResponse, TradePlan } from "@/lib/types";
+import type {
+  ChartImage,
+  Direction,
+  MacroContext,
+  MarketResponse,
+  RiskLevel,
+  TradePlan,
+  TrendScore,
+} from "@/lib/types";
+import { HTF_MAP } from "@/lib/types";
 
 const LS_KEY = "oracle:cfg:v2";
 
@@ -28,20 +37,22 @@ const TICKER = [
 ];
 
 const AUTO_STEPS = [
-  "Téléchargement des chandeliers temps réel",
-  "Génération du graphique TradingView (EMA + volumes)",
-  "Envoi du graphique au modèle IA",
-  "Lecture de la structure & tendance",
-  "Placement entrée / SL / TP suivant la tendance",
-  "Calcul du sizing & ratio R",
+  "Téléchargement des chandeliers (exécution + timeframes supérieurs)",
+  "Génération des graphiques TradingView (EMA + volumes)",
+  "Scan du calendrier économique & veille institutions (Fed, BCE, FMI, Reuters…)",
+  "Envoi au modèle IA — sélection automatique",
+  "Confirmation de la tendance multi-timeframe",
+  "Adaptation de la stratégie au contexte global",
+  "Placement entrée / SL / TP + sizing",
 ];
 
 const MANUAL_STEPS = [
-  "Décodage du graphique envoyé",
-  "Lecture de la structure & tendance",
-  "Repérage des zones de liquidité",
-  "Placement entrée / SL / TP",
-  "Calcul du sizing & ratio R",
+  "Lecture de la capture envoyée",
+  "Scan du calendrier économique & veille institutions",
+  "Envoi au modèle IA — sélection automatique",
+  "Lecture structure & tendance",
+  "Adaptation de la stratégie au contexte",
+  "Placement entrée / SL / TP + sizing",
 ];
 
 function rowToPlan(r: AnalysisRow): TradePlan {
@@ -68,6 +79,14 @@ function rowToPlan(r: AnalysisRow): TradePlan {
     riskAmount: r.riskAmount ?? 0,
     positionSize: r.positionSize,
     notional: r.notional,
+    strategie: r.strategie ?? "",
+    regime: r.regime ?? "",
+    confirmation_mtf: r.confirmationMtf ?? "",
+    alerte_macro: r.alerteMacro ?? null,
+    risque_environnement: (r.risqueEnv as RiskLevel) || "modéré",
+    htf_trends: (r.htfTrends as TrendScore[] | null) ?? [],
+    macro_events: r.macroEvents ?? [],
+    macro_headlines: r.macroHeadlines ?? [],
     resumer_tendance: r.resumerTendance ?? "",
     contexte: r.contexte ?? "",
     analyse: r.analyse ?? "",
@@ -100,13 +119,13 @@ export default function Terminal() {
   const [tokenError, setTokenError] = useState(false);
   const [status, setStatus] = useState<ViewStatus>("idle");
   const [plan, setPlan] = useState<TradePlan | null>(null);
+  const [charts, setCharts] = useState<{ tf: string; url: string }[]>([]);
   const [error, setError] = useState<{ message: string; detail?: string } | null>(null);
   const [history, setHistory] = useState<AnalysisRow[]>([]);
   const [histLoading, setHistLoading] = useState(true);
   const [loaderSteps, setLoaderSteps] = useState<string[]>(AUTO_STEPS);
   const resultRef = useRef<HTMLDivElement>(null);
 
-  // Restauration locale (clé API, chaîne DB & préférences — jamais persistées ailleurs).
   useEffect(() => {
     try {
       const raw = localStorage.getItem(LS_KEY);
@@ -185,48 +204,103 @@ export default function Terminal() {
     });
   };
 
-  /** Capture auto : récupère les chandeliers et génère la capture TradingView. */
-  const captureAuto = async (): Promise<{ image: string; source: string; lastClose: number }> => {
-    const res = await fetch(
-      `/api/market?symbol=${encodeURIComponent(cfg.pair.trim())}&tf=${encodeURIComponent(cfg.timeframe)}`,
-      { cache: "no-store", headers: authHeaders() },
-    );
-    const data = await res.json();
-    if (!res.ok) {
+  async function fetchMacro(symbol: string): Promise<MacroContext | null> {
+    try {
+      const res = await fetch(`/api/context?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store", headers: authHeaders() });
+      if (!res.ok) return null;
+      return (await res.json()) as MacroContext;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Capture auto : chandeliers multi-TF + graphiques + contexte macro. */
+  interface AutoBundle {
+    images: ChartImage[];
+    trends: TrendScore[];
+    mtfText: string;
+    marketSource: string;
+    lastClose: number;
+    macro: MacroContext | null;
+  }
+
+  const captureAuto = async (): Promise<AutoBundle> => {
+    const htfList = HTF_MAP[cfg.timeframe] ?? [];
+    const extra = htfList.length ? `&extra=${htfList.join(",")}` : "";
+    const [marketRes, macro] = await Promise.all([
+      fetch(`/api/market?symbol=${encodeURIComponent(cfg.pair.trim())}&tf=${encodeURIComponent(cfg.timeframe)}${extra}`, {
+        cache: "no-store",
+        headers: authHeaders(),
+      }),
+      fetchMacro(cfg.pair.trim()),
+    ]);
+    const data = await marketRes.json();
+    if (!marketRes.ok) {
       throw new Error(JSON.stringify({ message: data.error ?? "Données introuvables.", detail: data.detail }));
     }
-    const market = data as MarketResponse;
-    const shot = await captureTradingChart(market.candles);
-    const providerLabel = market.provider === "binance" ? "Binance" : market.provider === "kraken" ? "Kraken" : "Yahoo Finance";
-    const source = `${providerLabel} · ${market.symbol}`;
-    patchCfg({ image: shot, imageAuto: true });
-    return { image: shot, source, lastClose: market.lastClose };
+    const market = data as MarketResponse & { mtfText: string };
+
+    // Génère les graphiques : exécution + HTF
+    const series: { tf: string; candles: MarketResponse["candles"] }[] = [
+      { tf: market.tf, candles: market.candles },
+      ...market.htf.map((h) => ({ tf: h.tf, candles: h.candles })),
+    ];
+    const images: ChartImage[] = [];
+    const captured: { tf: string; url: string }[] = [];
+    for (const s of series.slice(0, 3)) {
+      const url = await captureTradingChart(s.candles);
+      images.push({ tf: s.tf, dataUrl: url });
+      captured.push({ tf: s.tf, url });
+    }
+    setCharts(captured);
+    patchCfg({ image: images[0]?.dataUrl ?? null, imageAuto: true });
+
+    const providerLabel =
+      market.provider === "binance" ? "Binance" : market.provider === "kraken" ? "Kraken" : "Yahoo Finance";
+    return {
+      images,
+      trends: [market.trend, ...market.htf.map((h) => h.trend)],
+      mtfText: market.mtfText,
+      marketSource: `${providerLabel} · ${market.symbol}`,
+      lastClose: market.lastClose,
+      macro,
+    };
   };
 
   const analyze = async () => {
     if (status === "loading") return;
     setError(null);
 
-    let image = cfg.image;
-    let marketSource: string | null = null;
-    let lastPrice: number | null = null;
-
     setLoaderSteps(cfg.autoCapture ? AUTO_STEPS : MANUAL_STEPS);
     setStatus("loading");
     scrollToResult();
 
     try {
-      if (cfg.autoCapture) {
-        const cap = await captureAuto();
-        image = cap.image;
-        marketSource = cap.source;
-        lastPrice = cap.lastClose;
-      }
+      let images: ChartImage[] = [];
+      let trends: TrendScore[] = [];
+      let mtfText = "";
+      let marketSource: string | null = null;
+      let lastPrice: number | null = null;
+      let macro: MacroContext | null = null;
 
-      if (!image) {
-        setError({ message: "Aucun graphique à analyser.", detail: "Ajoutez une capture ou activez le mode automatique." });
-        setStatus("error");
-        return;
+      if (cfg.autoCapture) {
+        const bundle = await captureAuto();
+        images = bundle.images;
+        trends = bundle.trends;
+        mtfText = bundle.mtfText;
+        marketSource = bundle.marketSource;
+        lastPrice = bundle.lastClose;
+        macro = bundle.macro;
+      } else {
+        if (!cfg.image) {
+          setError({ message: "Aucun graphique à analyser.", detail: "Ajoutez une capture ou activez le mode automatique." });
+          setStatus("error");
+          return;
+        }
+        setCharts([{ tf: cfg.timeframe, url: cfg.image }]);
+        macro = await fetchMacro(cfg.pair.trim());
+        images = [{ tf: cfg.timeframe, dataUrl: cfg.image }];
+        marketSource = "Capture manuelle";
       }
 
       const res = await fetch("/api/analyze", {
@@ -239,9 +313,12 @@ export default function Terminal() {
           timeframe: cfg.timeframe,
           capital: Number(cfg.capital.replace(",", ".")) || 0,
           riskPercent: cfg.riskPercent,
-          image,
-          marketSource: marketSource ?? (cfg.imageAuto ? "Capture auto" : "Capture manuelle"),
+          images,
+          marketSource,
           lastPrice,
+          htfTrends: trends,
+          mtfSummary: mtfText,
+          macro,
         }),
       });
       const data = await res.json();
@@ -287,6 +364,7 @@ export default function Terminal() {
 
   const openFromHistory = (row: AnalysisRow) => {
     setPlan(rowToPlan(row));
+    setCharts([]);
     setStatus("done");
     setError(null);
     scrollToResult();
@@ -350,7 +428,6 @@ export default function Terminal() {
             </div>
           </div>
 
-          {/* ticker */}
           <div className="relative ml-4 hidden flex-1 overflow-hidden md:block" style={{ maskImage: "linear-gradient(90deg, transparent, black 6%, black 94%, transparent)" }}>
             <div className="animate-ticker flex w-max items-center gap-8 py-1">
               {[...TICKER, ...TICKER].map((t, i) => (
@@ -380,12 +457,12 @@ export default function Terminal() {
       <div className="relative z-10 mx-auto max-w-[1500px] px-5 pt-10 lg:px-8 lg:pt-14">
         <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}>
           <p className="font-data text-[0.66rem] uppercase tracking-[0.42em] text-mint/80">
-            // terminal d&apos;analyse · graphique auto · ia vision openrouter
+            // multi-timeframe · calendrier éco · veille FMI / BCE / Reuters · stratégie adaptative
           </p>
           <h1 className="font-display mt-4 max-w-4xl text-[clamp(2rem,4.6vw,3.6rem)] font-bold leading-[1.04] tracking-tight text-white">
-            Donnez un actif.
+            Le marché, dans son
             <br />
-            <span className="text-glow-mint text-mint">ORACLE</span> capte le marché et trace le{" "}
+            <span className="text-glow-mint text-mint">contexte global</span>, traduit en{" "}
             <span className="relative inline-block">
               plan de trade
               <svg className="absolute -bottom-1 left-0 w-full" viewBox="0 0 220 10" fill="none" preserveAspectRatio="none">
@@ -394,9 +471,9 @@ export default function Terminal() {
             </span>
             .
           </h1>
-          <p className="mt-4 max-w-xl text-[0.92rem] leading-relaxed text-fog">
-            Tapez simplement l&apos;actif et le timeframe : le graphique TradingView est généré automatiquement à partir
-            des données temps réel, puis l&apos;IA lit la tendance et calcule entrée, stop loss, objectifs et taille de position.
+          <p className="mt-4 max-w-2xl text-[0.92rem] leading-relaxed text-fog">
+            ORACLE confirme la tendance sur les timeframes supérieurs, surveille les annonces économiques et les
+            décryptages des institutions fiables, puis adapte la stratégie : pullback, breakout, range — ou pas de trade.
           </p>
         </motion.div>
       </div>
@@ -413,6 +490,7 @@ export default function Terminal() {
             plan={plan}
             error={error}
             image={cfg.image}
+            charts={charts}
             steps={loaderSteps}
             onReset={() => setStatus("idle")}
           />

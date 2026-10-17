@@ -399,12 +399,13 @@ export default function ConfigPanel({ cfg, onChange, busy, onAnalyze }: Props) {
                 <Sparkles size={16} />
               </span>
               <div>
-                <p className="text-[0.8rem] font-semibold text-white/90">Capture automatique activée</p>
+                <p className="text-[0.8rem] font-semibold text-white/90">Capture automatique multi-timeframe</p>
                 <p className="mt-0.5 text-[0.7rem] leading-relaxed text-fog/75">
-                  En cliquant sur « Analyser », ORACLE télécharge les chandeliers{" "}
-                  <span className="font-data text-mint">{cfg.timeframe}</span> de{" "}
-                  <span className="font-data text-mint">{cfg.pair.trim() || "l'actif"}</span>, génère le graphique
-                  TradingView (EMA 20/50/200 + volumes) puis l&apos;envoie à l&apos;IA.
+                  ORACLE télécharge les chandeliers de{" "}
+                  <span className="font-data text-mint">{cfg.pair.trim() || "l'actif"}</span> sur{" "}
+                  <span className="font-data text-mint">{cfg.timeframe}</span> + timeframes supérieurs, génère les
+                  graphiques TradingView (EMA + volumes), vérifie le calendrier éco et la veille institutions, puis
+                  envoie le tout à l&apos;IA.
                 </p>
               </div>
             </div>

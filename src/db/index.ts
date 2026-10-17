@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
-import { DDL } from "@/lib/userdb";
+import { ensureSchema } from "@/lib/userdb";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -29,7 +29,7 @@ let defaultReady: Promise<void> | null = null;
 export function ensureDefaultTable(): Promise<void> {
   if (!databaseUrl) return Promise.reject(new Error("DATABASE_URL manquante"));
   if (!defaultReady) {
-    defaultReady = pool.query(DDL).then(() => undefined);
+    defaultReady = ensureSchema(pool);
     defaultReady.catch(() => {
       defaultReady = null;
     });

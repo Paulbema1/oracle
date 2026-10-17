@@ -23,8 +23,18 @@ import {
   Clock3,
   Sparkles,
   CandlestickChart,
+  Compass,
+  Activity,
+  Globe2,
+  Newspaper,
+  CalendarClock,
+  GitBranch,
+  ArrowUpRight,
+  ArrowDownRight,
+  ArrowRight,
+  ShieldCheck,
 } from "lucide-react";
-import type { TradePlan } from "@/lib/types";
+import type { RiskLevel, TradePlan, TrendScore } from "@/lib/types";
 import { modelLabel, formatPrice, formatMoney } from "@/lib/types";
 
 export type ViewStatus = "idle" | "loading" | "done" | "error";
@@ -34,6 +44,7 @@ interface Props {
   plan: TradePlan | null;
   error: { message: string; detail?: string } | null;
   image: string | null;
+  charts: { tf: string; url: string }[];
   steps: string[];
   onReset: () => void;
 }
@@ -94,7 +105,7 @@ function AnalysisLoader({ image, steps }: { image: string | null; steps: string[
         })}
       </div>
       <p className="font-data text-[0.7rem] uppercase tracking-[0.3em] text-fog/60">
-        le modèle vision décortique votre marché
+        technique + multi-tf + macro · le modèle vision travaille
       </p>
     </motion.div>
   );
@@ -171,18 +182,13 @@ function TradeLadder({ plan }: { plan: TradePlan }) {
   const farTp = tps.length ? (isShort ? Math.min(...tps) : Math.max(...tps)) : null;
   const tpPct = farTp !== null ? pct(farTp) : null;
 
-  const zoneTop = isShort ? slPct : tpPct ?? entryPct;
-  const zoneMid1 = isShort ? entryPct : entryPct;
-  // Zone gain (mint) entre entrée et TP le plus lointain ; zone risque (rouge) entre entrée et SL.
   const winTop = isShort ? entryPct : tpPct ?? entryPct;
   const winBottom = isShort ? tpPct ?? entryPct : entryPct;
   const riskTop = isShort ? slPct : entryPct;
   const riskBottom = isShort ? entryPct : slPct;
-  void zoneTop; void zoneMid1;
 
   return (
     <div className="relative h-[430px] select-none overflow-hidden rounded-2xl border border-line bg-ink/70">
-      {/* grille */}
       <div
         className="absolute inset-0 opacity-[0.35]"
         style={{
@@ -191,7 +197,6 @@ function TradeLadder({ plan }: { plan: TradePlan }) {
           backgroundSize: "100% 20%, 12.5% 100%",
         }}
       />
-      {/* zone gain */}
       {tpPct !== null && (
         <motion.div
           initial={{ opacity: 0 }}
@@ -205,7 +210,6 @@ function TradeLadder({ plan }: { plan: TradePlan }) {
           }}
         />
       )}
-      {/* zone risque */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -230,7 +234,7 @@ function TradeLadder({ plan }: { plan: TradePlan }) {
             style={{ top: `${top}%` }}
           >
             <div
-              className={`h-px w-full ${p.dashed ? "" : ""}`}
+              className="h-px w-full"
               style={{
                 background: p.dashed
                   ? `repeating-linear-gradient(90deg, ${p.color} 0 8px, transparent 8px 15px)`
@@ -241,7 +245,7 @@ function TradeLadder({ plan }: { plan: TradePlan }) {
             />
             <span
               className="absolute -top-[11px] left-4 rounded-md border px-2 py-[3px] text-[0.6rem] font-bold uppercase tracking-[0.14em]"
-              style={{ color: p.color, borderColor: `${p.color}55`, background: "rgba(4,9,11,0.9)", marginLeft: 0 }}
+              style={{ color: p.color, borderColor: `${p.color}55`, background: "rgba(4,9,11,0.9)" }}
             >
               {p.label}
               {p.rr !== null && p.rr > 0 && (
@@ -266,6 +270,81 @@ function TradeLadder({ plan }: { plan: TradePlan }) {
   );
 }
 
+/* ------------------------------ Helpers ------------------------------ */
+
+const REGIME_LABEL: Record<string, string> = {
+  tendance_forte: "Tendance forte",
+  tendance_faible: "Tendance faible",
+  range: "Range",
+  volatile: "Volatile",
+  incertain: "Incertain",
+};
+
+function regimeLabel(r: string): string {
+  return REGIME_LABEL[r] ?? (r ? r.charAt(0).toUpperCase() + r.slice(1).replace(/_/g, " ") : "—");
+}
+
+export function riskColor(level: RiskLevel): string {
+  return level === "élevé" ? "#ff5470" : level === "modéré" ? "#f5c66a" : "#2ef2a1";
+}
+
+function relativeFr(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "";
+  const mins = Math.round((Date.now() - t) / 60000);
+  if (mins < 1) return "à l'instant";
+  if (mins < 60) return `il y a ${mins} min`;
+  const h = Math.round(mins / 60);
+  if (h < 48) return `il y a ${h} h`;
+  return `il y a ${Math.round(h / 24)} j`;
+}
+
+function eventDateFr(iso: string): string {
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return "";
+  return t.toLocaleString("fr-FR", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function TrendChip({ t }: { t: TrendScore }) {
+  const color = t.direction === "haussière" ? "#2ef2a1" : t.direction === "baissière" ? "#ff5470" : "#f5c66a";
+  const Icon = t.direction === "haussière" ? ArrowUpRight : t.direction === "baissière" ? ArrowDownRight : ArrowRight;
+  return (
+    <div className="flex items-center gap-3 rounded-xl border px-3.5 py-2.5" style={{ borderColor: `${color}30`, background: `${color}0d` }}>
+      <span className="flex h-8 w-8 items-center justify-center rounded-lg border" style={{ color, borderColor: `${color}45`, background: `${color}14` }}>
+        <Icon size={15} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span className="font-data text-[0.8rem] font-bold text-white/90">{t.tf}</span>
+          <span className="text-[0.7rem] font-medium" style={{ color }}>{t.direction}</span>
+          <span className="font-data ml-auto text-[0.68rem] text-fog/70">{t.strength}/100</span>
+        </div>
+        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/[0.06]">
+          <motion.div
+            className="h-full rounded-full"
+            style={{ background: color, boxShadow: `0 0 8px ${color}` }}
+            initial={{ width: 0 }}
+            animate={{ width: `${t.strength}%` }}
+            transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1], delay: 0.5 }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function mtfVerdict(trends: TrendScore[]): { label: string; color: string } {
+  const dirs = trends.map((t) => t.direction);
+  const nonRange = dirs.filter((d) => d !== "range");
+  if (nonRange.length >= 2 && new Set(nonRange).size === 1 && dirs.every((d) => d === nonRange[0] || d === "range")) {
+    return { label: "Alignement complet", color: "#2ef2a1" };
+  }
+  if (nonRange.includes("haussière") && nonRange.includes("baissière")) {
+    return { label: "Conflit entre timeframes", color: "#ff5470" };
+  }
+  return { label: "Alignement partiel", color: "#f5c66a" };
+}
+
 /* ------------------------------ Result view ------------------------------ */
 
 const rise = {
@@ -277,20 +356,23 @@ const rise = {
   }),
 };
 
-export default function ResultView({ status, plan, error, image, steps, onReset }: Props) {
+export default function ResultView({ status, plan, error, image, charts, steps, onReset }: Props) {
   const [copied, setCopied] = useState(false);
 
   const copyPlan = async () => {
     if (!plan) return;
     const lines = [
       `ORACLE · ${plan.pair} (${plan.timeframe})`,
-      `Biais : ${plan.direction} — tendance ${plan.tendance} · confiance ${plan.confiance}%`,
+      `Stratégie : ${plan.strategie} — régime ${regimeLabel(plan.regime)}`,
+      `Biais : ${plan.direction} · tendance ${plan.tendance} · confiance ${plan.confiance}%`,
+      plan.confirmation_mtf ? `MTF : ${plan.confirmation_mtf}` : null,
       `Entrée : ${formatPrice(plan.entree)}`,
       `Stop Loss : ${formatPrice(plan.stop_loss)}`,
       `TP1 : ${formatPrice(plan.tp1)}${plan.rr1 ? ` (+${plan.rr1}R)` : ""}`,
       plan.tp2 ? `TP2 : ${formatPrice(plan.tp2)}${plan.rr2 ? ` (+${plan.rr2}R)` : ""}` : null,
       plan.tp3 ? `TP3 : ${formatPrice(plan.tp3)}${plan.rr3 ? ` (+${plan.rr3}R)` : ""}` : null,
       plan.positionSize ? `Taille : ${formatPrice(plan.positionSize)} unités (risque ${formatMoney(plan.riskAmount)})` : null,
+      plan.alerte_macro ? `⚠ Macro : ${plan.alerte_macro}` : null,
       plan.invalidation ? `Invalidation : ${plan.invalidation}` : null,
     ].filter(Boolean);
     try {
@@ -323,8 +405,7 @@ export default function ResultView({ status, plan, error, image, steps, onReset 
               <p className="max-w-md font-data text-[0.75rem] leading-relaxed text-fog/80">{error.detail}</p>
             )}
             <p className="max-w-md text-[0.78rem] leading-relaxed text-fog/60">
-              Vérifiez votre clé, vos crédits OpenRouter et la lisibilité du graphique (échelle de prix visible),
-              puis relancez l&apos;analyse.
+              Vérifiez votre clé, vos crédits OpenRouter et le symbole de l&apos;actif, puis relancez l&apos;analyse.
             </p>
             <button onClick={onReset} className="btn-ghost mt-2">
               <RotateCcw size={14} /> Réessayer
@@ -348,17 +429,18 @@ export default function ResultView({ status, plan, error, image, steps, onReset 
               </span>
             </div>
             <div>
-              <h3 className="font-display text-xl font-semibold text-white/90">En attente d&apos;un graphique</h3>
-              <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-fog/75">
-                Configurez votre environnement à gauche, importez la capture du marché, et ORACLE tracera le plan :
-                tendance, entrée, stop loss et objectifs.
+              <h3 className="font-display text-xl font-semibold text-white/90">En attente d&apos;un actif</h3>
+              <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-fog/75">
+                ORACLE génère les graphiques sur 3 timeframes, confirme la tendance en HTF, vérifie le calendrier
+                économique et la veille institutionnelle — puis adapte la stratégie.
               </p>
             </div>
-            <div className="grid w-full max-w-lg grid-cols-3 gap-3">
+            <div className="grid w-full max-w-2xl grid-cols-2 gap-3 sm:grid-cols-4">
               {[
-                { n: "01", t: "Clé & modèle", d: "Connectez OpenRouter" },
-                { n: "02", t: "Capture", d: "Paire + timeframe + image" },
-                { n: "03", t: "Plan de trade", d: "Entrée · SL · TP suivant la tendance" },
+                { n: "01", t: "Multi-TF", d: "Tendance confirmée en 1H / 4H / 1D", i: <GitBranch size={15} /> },
+                { n: "02", t: "Annonces éco", d: "Fed, BCE, NFP, CPI…", i: <CalendarClock size={15} /> },
+                { n: "03", t: "Institutions", d: "FMI, BCE, Reuters, Bloomberg", i: <Newspaper size={15} /> },
+                { n: "04", t: "Stratégie", d: "Adaptée au régime du marché", i: <Compass size={15} /> },
               ].map((s, i) => (
                 <motion.div
                   key={s.n}
@@ -368,9 +450,12 @@ export default function ResultView({ status, plan, error, image, steps, onReset 
                   custom={i}
                   className="rounded-2xl border border-line bg-ink/60 p-4 text-left"
                 >
-                  <span className="font-data text-[0.62rem] tracking-[0.3em] text-mint/70">{s.n}</span>
+                  <div className="flex items-center justify-between">
+                    <span className="font-data text-[0.62rem] tracking-[0.3em] text-mint/70">{s.n}</span>
+                    <span className="text-mint/60">{s.i}</span>
+                  </div>
                   <p className="mt-1.5 text-[0.8rem] font-semibold text-white/85">{s.t}</p>
-                  <p className="mt-0.5 text-[0.68rem] leading-snug text-fog/60">{s.d}</p>
+                  <p className="mt-0.5 text-[0.66rem] leading-snug text-fog/60">{s.d}</p>
                 </motion.div>
               ))}
             </div>
@@ -379,41 +464,84 @@ export default function ResultView({ status, plan, error, image, steps, onReset 
 
         {status === "done" && plan && (
           <motion.div key="d" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-5">
-            {/* En-tête */}
-            <motion.div variants={rise} initial="hidden" animate="show" custom={0} className="panel flex flex-wrap items-center gap-5 p-6">
-              <div
-                className={`flex items-center gap-3 rounded-2xl border px-5 py-3.5 ${
-                  plan.direction === "LONG"
-                    ? "border-mint/40 bg-mint/[0.09] shadow-[0_0_40px_rgba(46,242,161,0.15)]"
-                    : plan.direction === "SHORT"
-                      ? "border-danger/40 bg-danger/[0.09] shadow-[0_0_40px_rgba(255,84,112,0.15)]"
-                      : "border-gold/40 bg-gold/[0.08]"
-                }`}
+            {/* Alerte macro prioritaire */}
+            {plan.alerte_macro && (
+              <motion.div
+                variants={rise}
+                initial="hidden"
+                animate="show"
+                custom={0}
+                className="flex items-start gap-3 rounded-2xl border border-gold/35 bg-gold/[0.07] px-5 py-4"
               >
-                {plan.direction === "LONG" && <TrendingUp size={26} className="text-glow-mint text-mint" />}
-                {plan.direction === "SHORT" && <TrendingDown size={26} className="text-glow-danger text-danger" />}
-                {plan.direction === "NEUTRE" && <Minus size={26} className="text-gold" />}
+                <OctagonAlert size={18} className="mt-0.5 shrink-0 text-gold" />
                 <div>
-                  <p
-                    className={`font-display text-2xl font-bold leading-none tracking-wide ${
-                      plan.direction === "LONG" ? "text-glow-mint text-mint" : plan.direction === "SHORT" ? "text-glow-danger text-danger" : "text-gold"
-                    }`}
-                  >
-                    {plan.direction === "NEUTRE" ? "ATTENTE" : plan.direction}
-                  </p>
-                  <p className="mt-1 text-[0.66rem] uppercase tracking-[0.2em] text-fog">tendance {plan.tendance}</p>
+                  <p className="text-[0.7rem] font-bold uppercase tracking-[0.18em] text-gold">Alerte contexte global</p>
+                  <p className="mt-1 text-[0.84rem] leading-relaxed text-white/85">{plan.alerte_macro}</p>
                 </div>
+              </motion.div>
+            )}
+
+            {/* En-tête */}
+            <motion.div variants={rise} initial="hidden" animate="show" custom={0} className="panel p-6">
+              <div className="flex flex-wrap items-center gap-5">
+                <div
+                  className={`flex items-center gap-3 rounded-2xl border px-5 py-3.5 ${
+                    plan.direction === "LONG"
+                      ? "border-mint/40 bg-mint/[0.09] shadow-[0_0_40px_rgba(46,242,161,0.15)]"
+                      : plan.direction === "SHORT"
+                        ? "border-danger/40 bg-danger/[0.09] shadow-[0_0_40px_rgba(255,84,112,0.15)]"
+                        : "border-gold/40 bg-gold/[0.08]"
+                  }`}
+                >
+                  {plan.direction === "LONG" && <TrendingUp size={26} className="text-glow-mint text-mint" />}
+                  {plan.direction === "SHORT" && <TrendingDown size={26} className="text-glow-danger text-danger" />}
+                  {plan.direction === "NEUTRE" && <Minus size={26} className="text-gold" />}
+                  <div>
+                    <p
+                      className={`font-display text-2xl font-bold leading-none tracking-wide ${
+                        plan.direction === "LONG" ? "text-glow-mint text-mint" : plan.direction === "SHORT" ? "text-glow-danger text-danger" : "text-gold"
+                      }`}
+                    >
+                      {plan.direction === "NEUTRE" ? "ATTENTE" : plan.direction}
+                    </p>
+                    <p className="mt-1 text-[0.66rem] uppercase tracking-[0.2em] text-fog">tendance {plan.tendance}</p>
+                  </div>
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="font-display text-2xl font-semibold tracking-tight text-white">{plan.pair}</h3>
+                    <span className="chip !text-mint !border-mint/30">{plan.timeframe}</span>
+                    <span
+                      className="chip"
+                      style={{
+                        color: riskColor(plan.risque_environnement),
+                        borderColor: `${riskColor(plan.risque_environnement)}45`,
+                      }}
+                    >
+                      {plan.risque_environnement === "faible" ? <ShieldCheck size={11} /> : <ShieldAlert size={11} />}
+                      risque {plan.risque_environnement}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 max-w-2xl text-[0.84rem] leading-relaxed text-fog">{plan.resumer_tendance}</p>
+                </div>
+
+                <ConfidenceRing value={plan.confiance} />
               </div>
 
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="font-display text-2xl font-semibold tracking-tight text-white">{plan.pair}</h3>
-                  <span className="chip !text-mint !border-mint/30">{plan.timeframe}</span>
-                </div>
-                <p className="mt-1.5 max-w-2xl text-[0.84rem] leading-relaxed text-fog">{plan.resumer_tendance}</p>
+              {/* Stratégie + régime */}
+              <div className="mt-5 flex flex-wrap gap-2.5 border-t border-line/60 pt-5">
+                <span className="flex items-center gap-2 rounded-xl border border-mint/25 bg-mint/[0.06] px-4 py-2.5">
+                  <Compass size={15} className="text-mint" />
+                  <span className="text-[0.7rem] uppercase tracking-[0.14em] text-fog">Stratégie</span>
+                  <span className="text-[0.86rem] font-semibold text-mint">{plan.strategie}</span>
+                </span>
+                <span className="flex items-center gap-2 rounded-xl border border-line bg-ink/60 px-4 py-2.5">
+                  <Activity size={15} className="text-ice" />
+                  <span className="text-[0.7rem] uppercase tracking-[0.14em] text-fog">Régime</span>
+                  <span className="text-[0.86rem] font-semibold text-white/85">{regimeLabel(plan.regime)}</span>
+                </span>
               </div>
-
-              <ConfidenceRing value={plan.confiance} />
             </motion.div>
 
             {/* Meta + actions */}
@@ -448,7 +576,7 @@ export default function ResultView({ status, plan, error, image, steps, onReset 
               </div>
             </motion.div>
 
-            {/* Échelle + cartes niveaux */}
+            {/* Échelle + niveaux/sizing */}
             <div className="grid gap-5 xl:grid-cols-[1.35fr_1fr]">
               <motion.div variants={rise} initial="hidden" animate="show" custom={2} className="panel p-5">
                 <h4 className="mb-4 flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-fog">
@@ -458,7 +586,6 @@ export default function ResultView({ status, plan, error, image, steps, onReset 
               </motion.div>
 
               <motion.div variants={rise} initial="hidden" animate="show" custom={3} className="flex flex-col gap-5">
-                {/* Niveaux */}
                 <div className="panel p-5">
                   <h4 className="mb-4 flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-fog">
                     <Target size={13} className="text-mint" /> Niveaux d&apos;exécution
@@ -498,7 +625,6 @@ export default function ResultView({ status, plan, error, image, steps, onReset 
                   </div>
                 </div>
 
-                {/* Sizing */}
                 <div className="panel p-5">
                   <h4 className="mb-4 flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-fog">
                     <Wallet size={13} className="text-mint" /> Dimensionnement
@@ -525,9 +651,138 @@ export default function ResultView({ status, plan, error, image, steps, onReset 
               </motion.div>
             </div>
 
+            {/* Multi-timeframe + Macro */}
+            <div className="grid gap-5 xl:grid-cols-2">
+              {/* MTF */}
+              <motion.div variants={rise} initial="hidden" animate="show" custom={4} className="panel p-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <h4 className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-fog">
+                    <GitBranch size={13} className="text-mint" /> Confirmation multi-timeframe
+                  </h4>
+                  {plan.htf_trends.length > 0 && (
+                    <span
+                      className="chip"
+                      style={{ color: mtfVerdict(plan.htf_trends).color, borderColor: `${mtfVerdict(plan.htf_trends).color}45` }}
+                    >
+                      {mtfVerdict(plan.htf_trends).label}
+                    </span>
+                  )}
+                </div>
+                {plan.htf_trends.length > 0 ? (
+                  <>
+                    <div className="space-y-2.5">
+                      {plan.htf_trends.map((t, idx) => (
+                        <div key={t.tf} className="relative">
+                          {idx === 0 && (
+                            <span className="absolute -top-2 left-3 z-10 rounded bg-abyss px-1.5 text-[0.56rem] font-bold uppercase tracking-[0.16em] text-ice/80">
+                              exécution
+                            </span>
+                          )}
+                          <TrendChip t={t} />
+                        </div>
+                      ))}
+                    </div>
+                    {plan.confirmation_mtf && (
+                      <p className="mt-4 rounded-xl border border-line bg-ink/60 px-4 py-3 text-[0.8rem] leading-relaxed text-white/75">
+                        {plan.confirmation_mtf}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-[0.8rem] leading-relaxed text-fog/70">
+                    {plan.confirmation_mtf || "Confirmation multi-timeframe non disponible pour cette analyse."}
+                  </p>
+                )}
+                {/* Miniatures des graphiques capturés */}
+                {charts.length > 0 && (
+                  <div className="mt-4 grid grid-cols-3 gap-2">
+                    {charts.map((c) => (
+                      <div key={c.tf} className="group relative overflow-hidden rounded-xl border border-line">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={c.url} alt={`Graphique ${c.tf}`} className="aspect-video w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                        <span className="font-data absolute left-1.5 top-1.5 rounded-md bg-abyss/85 px-1.5 py-0.5 text-[0.6rem] font-bold text-mint">
+                          {c.tf}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+
+              {/* Macro */}
+              <motion.div variants={rise} initial="hidden" animate="show" custom={5} className="panel flex flex-col p-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <h4 className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-fog">
+                    <Globe2 size={13} className="text-mint" /> Contexte macro & annonces
+                  </h4>
+                  <span
+                    className="chip"
+                    style={{ color: riskColor(plan.risque_environnement), borderColor: `${riskColor(plan.risque_environnement)}45` }}
+                  >
+                    risque {plan.risque_environnement}
+                  </span>
+                </div>
+
+                {plan.macro_events.length > 0 ? (
+                  <div className="mb-4 space-y-2">
+                    {plan.macro_events.slice(0, 4).map((e, i) => (
+                      <div key={i} className="flex items-center gap-3 rounded-xl border border-line bg-ink/60 px-3.5 py-2.5">
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{
+                            background: e.impact === "High" ? "#ff5470" : "#f5c66a",
+                            boxShadow: `0 0 10px ${e.impact === "High" ? "rgba(255,84,112,0.7)" : "rgba(245,198,106,0.7)"}`,
+                          }}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[0.78rem] font-medium text-white/85">{e.title}</p>
+                          <p className="font-data text-[0.64rem] text-fog/60">{eventDateFr(e.date)}{e.forecast ? ` · cons. ${e.forecast}` : ""}</p>
+                        </div>
+                        <span className="chip !px-2 !py-[2px] !text-[0.58rem]">{e.currency}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mb-4 rounded-xl border border-line bg-ink/60 px-4 py-3 text-[0.76rem] text-fog/70">
+                    Aucune annonce majeure imminente détectée sur les devises concernées.
+                  </p>
+                )}
+
+                {plan.macro_headlines.length > 0 && (
+                  <div className="flex-1">
+                    <p className="mb-2.5 flex items-center gap-2 text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-fog/70">
+                      <Newspaper size={12} /> Veille institutions & presse fiable
+                    </p>
+                    <ul className="max-h-56 space-y-1 overflow-y-auto pr-1">
+                      {plan.macro_headlines.map((h, i) => (
+                        <li key={i}>
+                          <a
+                            href={h.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="group flex items-start gap-2.5 rounded-lg px-2.5 py-2 transition-colors hover:bg-mint/[0.05]"
+                          >
+                            <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-mint/60" />
+                            <span className="min-w-0">
+                              <span className="block truncate text-[0.76rem] leading-snug text-white/80 group-hover:text-white">
+                                {h.title}
+                              </span>
+                              <span className="mt-0.5 block text-[0.62rem] text-fog/55">
+                                {h.source} · {relativeFr(h.publishedAt)}
+                              </span>
+                            </span>
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </motion.div>
+            </div>
+
             {/* Niveaux clés */}
             {plan.niveaux_cles.length > 0 && (
-              <motion.div variants={rise} initial="hidden" animate="show" custom={4} className="panel p-5">
+              <motion.div variants={rise} initial="hidden" animate="show" custom={6} className="panel p-5">
                 <h4 className="mb-4 flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-fog">
                   <Layers size={13} className="text-mint" /> Niveaux clés du graphique
                 </h4>
@@ -551,7 +806,7 @@ export default function ResultView({ status, plan, error, image, steps, onReset 
 
             {/* Analyse + confluences */}
             <div className="grid gap-5 xl:grid-cols-[1.35fr_1fr]">
-              <motion.div variants={rise} initial="hidden" animate="show" custom={5} className="panel p-6">
+              <motion.div variants={rise} initial="hidden" animate="show" custom={7} className="panel p-6">
                 <h4 className="mb-4 flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-fog">
                   <BookOpenText size={13} className="text-mint" /> Lecture du marché
                 </h4>
@@ -572,7 +827,7 @@ export default function ResultView({ status, plan, error, image, steps, onReset 
                 </div>
               </motion.div>
 
-              <motion.div variants={rise} initial="hidden" animate="show" custom={6} className="flex flex-col gap-5">
+              <motion.div variants={rise} initial="hidden" animate="show" custom={8} className="flex flex-col gap-5">
                 {plan.confluences.length > 0 && (
                   <div className="panel p-6">
                     <h4 className="mb-4 flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-fog">
@@ -606,7 +861,7 @@ export default function ResultView({ status, plan, error, image, steps, onReset 
               </motion.div>
             </div>
 
-            <motion.p variants={rise} initial="hidden" animate="show" custom={7} className="px-2 pb-4 text-center text-[0.66rem] leading-relaxed text-fog/45">
+            <motion.p variants={rise} initial="hidden" animate="show" custom={9} className="px-2 pb-4 text-center text-[0.66rem] leading-relaxed text-fog/45">
               ORACLE est un outil d&apos;aide à la décision — les marchés comportent des risques. Ceci n&apos;est pas un conseil
               financier : validez toujours par votre propre analyse et respectez votre gestion du risque.
             </motion.p>

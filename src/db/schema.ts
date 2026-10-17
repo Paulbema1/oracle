@@ -1,4 +1,5 @@
 import { pgTable, uuid, text, doublePrecision, integer, timestamp, jsonb } from "drizzle-orm/pg-core";
+import type { Headline, MacroEvent, TrendScore } from "@/lib/types";
 
 export const analyses = pgTable("analyses", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -23,6 +24,15 @@ export const analyses = pgTable("analyses", {
   notional: doublePrecision("notional"),
   marketSource: text("market_source"),
   lastPrice: doublePrecision("last_price"),
+  // Stratégie adaptative & multi-timeframe
+  strategie: text("strategie").default(""),
+  regime: text("regime").default(""),
+  confirmationMtf: text("confirmation_mtf").default(""),
+  alerteMacro: text("alerte_macro"),
+  risqueEnv: text("risque_env").default("modéré"),
+  htfTrends: jsonb("htf_trends").$type<TrendScore[]>().default([]),
+  macroEvents: jsonb("macro_events").$type<MacroEvent[]>().default([]),
+  macroHeadlines: jsonb("macro_headlines").$type<Headline[]>().default([]),
   resumerTendance: text("resumer_tendance").default(""),
   contexte: text("contexte").default(""),
   analyse: text("analyse").default(""),

@@ -40,7 +40,7 @@ export async function captureTradingChart(candles: OhlcCandle[]): Promise<string
     const visible = candles.slice(-150);
     // Sécurité : horodatages strictement croissants et dédupliqués
     const unique = visible.filter((c, i) => i === 0 || c.time > visible[i - 1].time);
-    // EMA calculées sur tout l'historique reçu (meilleur échauffement, EMA 200 possible)
+    // EMA calculées sur tout l'historique reçu (échauffement correct, EMA 200 visible)
     const allUnique = candles.filter((c, i) => i === 0 || c.time > candles[i - 1].time);
 
     chart = createChart(host, {
@@ -119,7 +119,8 @@ export async function captureTradingChart(candles: OhlcCandle[]): Promise<string
     chart.timeScale().fitContent();
 
     const canvas = chart.takeScreenshot();
-    const dataUrl = canvas.toDataURL("image/png");
+    // JPEG : beaucoup plus léger pour l'envoi multi-images au modèle vision
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
     chart.remove();
     chart = null;
     return dataUrl;

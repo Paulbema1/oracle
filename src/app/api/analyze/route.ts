@@ -3,7 +3,8 @@ import { isAuthorized, unauthorized } from "@/lib/auth";
 import { db, ensureDefaultTable } from "@/db";
 import { analyses } from "@/db/schema";
 import { getUserDb } from "@/lib/userdb";
-import type { AiAnalysis, AnalyzeRequest, KeyLevel, TradePlan } from "@/lib/types";
+import { hasTrendConflict } from "@/lib/trend";
+import type { AiAnalysis, AnalyzeRequest, KeyLevel, RiskLevel, TradePlan } from "@/lib/types";
 import { MODELS } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -11,21 +12,35 @@ export const maxDuration = 300;
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-const SYSTEM_PROMPT = `Tu es ORACLE, un analyste technique d'élite spécialisé en price action, structure de marché (Smart Money Concepts), liquidité et gestion du risque. On te fournit un graphique en chandeliers avec moyennes mobiles (EMA 20 bleue, EMA 50 orange, EMA 200 violette) et volumes, généré à partir de données de marché réelles. L'échelle des prix est sur l'axe de droite.
+const SYSTEM_PROMPT = `Tu es ORACLE, un analyste de marché d'élite combinant analyse technique multi-timeframe, Smart Money Concepts et veille macro-institutionnelle (banques centrales, FMI, presse financière).
 
-MISSION ABSOLUE : TU SUIS TOUJOURS LA TENDANCE DOMINANTE. Jamais de contre-tendance.
-- Identifie d'abord la tendance (structure HH/HL = haussière, LH/LL = baissière, sinon range).
-- En tendance haussière : tu proposes UNIQUEMENT un LONG, idéalement sur pullback vers un support, un order block, une EMA ou une zone de demande.
-- En tendance baissière : tu proposes UNIQUEMENT un SHORT, idéalement sur retracement vers une résistance, un order block ou une zone d'offre.
-- Si la structure est illisible / en range : direction = "NEUTRE", tu conseilles d'attendre.
+Tu reçois :
+1. Plusieurs images de graphiques (chandeliers + EMA 20 bleue / EMA 50 orange / EMA 200 violette + volumes) : la 1re image = timeframe d'EXÉCUTION, les suivantes = TIMEFRAMES SUPÉRIEURS (la correspondance exacte est donnée dans le texte).
+2. Un tableau d'analyse de tendance automatique par timeframe (calcul algorithmique — fiable).
+3. Un briefing macro : calendrier économique à venir et gros titres récents d'institutions fiables (Fed, BCE, FMI, Reuters, Bloomberg…).
 
-RÈGLES DU PLAN :
-- L'entrée est un prix précis lu sur l'échelle du graphique (pas une moyenne de l'image).
-- Le stop loss se place derrière la structure invalide (dernier plus bas/haut, sous le support ou au-dessus de la résistance).
-- TP1 = premier objectif réaliste (ratio >= 1). TP2 / TP3 = objectifs étendus (peuvent être null si non pertinents).
-- Sois strict sur la cohérence : pour LONG, stop_loss < entree < tp1 < tp2 < tp3. Pour SHORT, stop_loss > entree > tp1 > tp2 > tp3.
+═══ RÈGLES ABSOLUES ═══
+A. CONFIRMATION MULTI-TIMEFRAME (obligatoire)
+- Tu détermines d'abord le biais directionnel sur les TIMEFRAMES SUPÉRIEURS (structure HH/HL ou LH/LL, position vs EMA200).
+- Un LONG n'est autorisé que si le contexte HTF est haussier ou neutre-haussier. Un SHORT uniquement si le HTF est baissier ou neutre-baissier.
+- En cas de CONFLIT entre le timeframe d'exécution et les HTF → direction = "NEUTRE" (attendre l'alignement) ou confiance ≤ 40 avec alerte explicite.
+- L'entrée se joue sur le timeframe d'exécution (pullback vers EMA, order block, support/résistance, FVG…), dans le SENS du biais HTF.
 
-RÉPONDS UNIQUEMENT avec un objet JSON valide, sans aucun texte autour, sans bloc markdown. Schéma exact :
+B. RESPECT DU CONTEXTE GLOBAL (économie, géopolitique, marchés)
+- Intègre le briefing macro : annonces à fort impact, ton des banques centrales, géopolitique, appétit pour le risque.
+- Annonce majeure imminente (FOMC, NFP, CPI, décision BCE…) → réduis la confiance, propose éventuellement "NEUTRE — pas de trade avant l'annonce", et remplis alerte_macro.
+- Gros titres contraires au setup (ex: banque centrale hawkish contre un LONG sur biais faible) → mentionne-le dans confluences/alerte_macro.
+
+C. STRATÉGIE ADAPTATIVE
+- Choisis la stratégie adaptée au régime réel : "Pullback en tendance", "Breakout confirmé", "Trading de range (bornes)", ou "Pas de trade".
+- Tendance forte alignée → pullback ou breakout. Range propre sur TOUS les TF → fades aux bornes avec stops courts. Incertitude/news → pas de trade.
+- Jamais de contre-tendance HTF "par conviction".
+
+D. PRÉCISION DES NIVEAUX
+- Lis l'échelle de prix (axe de droite) pour des niveaux exacts. Stop loss derrière la structure invalide. TP1 réaliste (R≥1), TP2/TP3 étendus (null si non pertinent).
+- LONG : stop_loss < entree < tp1 ≤ tp2 ≤ tp3. SHORT : stop_loss > entree > tp1 ≥ tp2 ≥ tp3.
+
+RÉPONDS UNIQUEMENT avec un objet JSON valide, sans texte autour, sans markdown. Schéma exact :
 {
   "direction": "LONG" | "SHORT" | "NEUTRE",
   "tendance": "haussière" | "baissière" | "range",
@@ -35,12 +50,17 @@ RÉPONDS UNIQUEMENT avec un objet JSON valide, sans aucun texte autour, sans blo
   "tp1": number,
   "tp2": number | null,
   "tp3": number | null,
-  "resumer_tendance": "une phrase percutante décrivant la tendance et le biais",
-  "contexte": "2-3 phrases : contexte macro du graphique, structure HTF, position du prix",
-  "analyse": "analyse détaillée en français, 2-4 paragraphes courts séparés par une ligne vide : structure, liquidité, momentum, scénario privilégié et plan d'exécution",
+  "strategie": "nom court de la stratégie adoptée (ex: Pullback tendance haussière H4)",
+  "regime": "tendance_forte" | "tendance_faible" | "range" | "volatile" | "incertain",
+  "confirmation_mtf": "2-3 phrases : biais HTF, alignement/conflit entre timeframes, conclusion",
+  "alerte_macro": "string ou null — l'avertissement macro clé (annonce imminente, risque géopolitique…)",
+  "risque_environnement": "faible" | "modéré" | "élevé",
+  "resumer_tendance": "une phrase percutante : tendance + biais + stratégie",
+  "contexte": "2-3 phrases : structure HTF, position du prix, intégration du contexte macro",
+  "analyse": "analyse détaillée en français, 3-5 paragraphes courts séparés par une ligne vide : 1) contexte technique MTF, 2) ce que dit le contexte macro/institutionnel et son impact, 3) liquidité/momentum, 4) scénario privilégié et plan d'exécution pas à pas, 5) gestion du risque (taille, surveillance des annonces)",
   "niveaux_cles": [{"prix": number, "type": "support" | "resistance", "label": "court libellé"}],
-  "confluences": ["liste de 3 à 6 confluences concrètes observées sur le graphique"],
-  "invalidation": "ce qui invalide précisément le scénario"
+  "confluences": ["3 à 6 confluences concrètes (technique + macro)"],
+  "invalidation": "ce qui invalide précisément le scénario (niveau + condition macro éventuelle)"
 }`;
 
 function extractJson(text: string): Record<string, unknown> {
@@ -63,9 +83,14 @@ function toNumber(v: unknown): number | null {
   return null;
 }
 
-function normalize(raw: Record<string, unknown>): AiAnalysis {
+function str(v: unknown, max: number): string {
+  return String(v ?? "").slice(0, max);
+}
+
+function normalize(raw: Record<string, unknown>, conflict: boolean): AiAnalysis {
   const dir = String(raw.direction ?? "NEUTRE").toUpperCase();
-  const direction = dir === "LONG" || dir === "SHORT" ? dir : "NEUTRE";
+  const dirTyped: AiAnalysis["direction"] = dir === "LONG" || dir === "SHORT" ? dir : "NEUTRE";
+  let direction = dirTyped;
   const tendanceRaw = String(raw.tendance ?? "range").toLowerCase();
   const tendance = tendanceRaw.startsWith("hauss") ? "haussière" : tendanceRaw.startsWith("baiss") ? "baissière" : "range";
   const niveaux: KeyLevel[] = Array.isArray(raw.niveaux_cles)
@@ -74,27 +99,38 @@ function normalize(raw: Record<string, unknown>): AiAnalysis {
         return {
           prix: toNumber(o.prix) ?? 0,
           type: o.type === "resistance" ? "resistance" : o.type === "support" ? "support" : "autre",
-          label: String(o.label ?? "").slice(0, 80),
+          label: str(o.label, 80),
         };
       })
     : [];
+  const risqueRaw = str(raw.risque_environnement, 20).toLowerCase();
+  const risque_environnement: RiskLevel = risqueRaw.includes("lev") ? "élevé" : risqueRaw.includes("mod") ? "modéré" : "faible";
+  // Garde-fou : en cas de conflit MTF avéré, on n'autorise pas un signal agressif sans alerte.
+  if (conflict && direction !== "NEUTRE" && !str(raw.alerte_macro, 10) && !str(raw.confirmation_mtf, 10).toLowerCase().includes("conflit")) {
+    direction = "NEUTRE";
+  }
   return {
     direction,
     tendance,
-    confiance: Math.max(0, Math.min(100, Math.round(toNumber(raw.confidence ?? raw.confiance) ?? 0))),
+    confiance: Math.max(0, Math.min(100, Math.round(toNumber(raw.confiance) ?? 0))),
     entree: toNumber(raw.entree) ?? 0,
     stop_loss: toNumber(raw.stop_loss) ?? 0,
     tp1: toNumber(raw.tp1) ?? 0,
     tp2: toNumber(raw.tp2),
     tp3: toNumber(raw.tp3),
-    resumer_tendance: String(raw.resumer_tendance ?? "").slice(0, 300),
-    contexte: String(raw.contexte ?? "").slice(0, 800),
-    analyse: String(raw.analyse ?? "").slice(0, 4000),
+    strategie: str(raw.strategie, 120) || "Lecture de marché",
+    regime: str(raw.regime, 40) || "incertain",
+    confirmation_mtf: str(raw.confirmation_mtf, 600),
+    alerte_macro: raw.alerte_macro ? str(raw.alerte_macro, 400) : null,
+    risque_environnement,
+    resumer_tendance: str(raw.resumer_tendance, 300),
+    contexte: str(raw.contexte, 800),
+    analyse: str(raw.analyse, 6000),
     niveaux_cles: niveaux.filter((n) => n.prix > 0),
     confluences: Array.isArray(raw.confluences)
-      ? (raw.confluences as unknown[]).slice(0, 8).map((c) => String(c).slice(0, 160))
+      ? (raw.confluences as unknown[]).slice(0, 8).map((c) => str(c, 180))
       : [],
-    invalidation: String(raw.invalidation ?? "").slice(0, 400),
+    invalidation: str(raw.invalidation, 400),
   };
 }
 
@@ -112,13 +148,14 @@ interface OrAttempt {
   message: string;
 }
 
-/** Appel OpenRouter pour UN modèle, avec timeout. */
+type ImagePart = { type: "image_url"; image_url: { url: string } };
+type TextPart = { type: "text"; text: string };
+
 async function callModel(
   apiKey: string,
   model: string,
-  userText: string,
-  image: string,
-  timeoutMs = 60_000,
+  content: (TextPart | ImagePart)[],
+  timeoutMs = 75_000,
 ): Promise<{ ok: true; content: string } | { ok: false; status: number | null; message: string }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -129,27 +166,20 @@ async function callModel(
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "https://oracle-terminal.local",
-        "X-Title": "ORACLE — Analyse IA de marché",
+        "X-Title": "ORACLE - AI market analysis",
       },
       body: JSON.stringify({
         model,
         temperature: 0.15,
-        max_tokens: 2500,
+        max_tokens: 3000,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: userText },
-              { type: "image_url", image_url: { url: image } },
-            ],
-          },
+          { role: "user", content },
         ],
       }),
       signal: ctrl.signal,
     });
     clearTimeout(timer);
-
     if (!res.ok) {
       let message = `HTTP ${res.status}`;
       try {
@@ -161,12 +191,15 @@ async function callModel(
       return { ok: false, status: res.status, message };
     }
     const payload = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    const content = payload.choices?.[0]?.message?.content ?? "";
-    if (!content.trim()) return { ok: false, status: res.status, message: "Réponse vide" };
-    return { ok: true, content };
+    const text = payload.choices?.[0]?.message?.content ?? "";
+    if (!text.trim()) return { ok: false, status: res.status, message: "Réponse vide" };
+    return { ok: true, content: text };
   } catch (e) {
     clearTimeout(timer);
-    const msg = e instanceof Error && e.name === "AbortError" ? "Délai dépassé" : "Réseau injoignable";
+    const msg =
+      e instanceof Error && e.name === "AbortError"
+        ? "Délai dépassé"
+        : `Appel impossible : ${e instanceof Error ? e.message : "erreur réseau"}`;
     return { ok: false, status: null, message: msg };
   }
 }
@@ -180,30 +213,55 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
   }
 
-  const { apiKey, dbUrl, pair, timeframe, capital, riskPercent, image, marketSource, lastPrice } = body;
+  const { apiKey, dbUrl, pair, timeframe, capital, riskPercent, images, marketSource, lastPrice, htfTrends, mtfSummary, macro } = body;
 
   if (!apiKey || typeof apiKey !== "string" || !apiKey.startsWith("sk-")) {
     return NextResponse.json({ error: "Clé API OpenRouter invalide (elle doit commencer par « sk- »)." }, { status: 400 });
   }
-  if (!image || typeof image !== "string" || !image.startsWith("data:image")) {
-    return NextResponse.json({ error: "Image du graphique manquante ou invalide." }, { status: 400 });
-  }
-  if (image.length > 12_000_000) {
-    return NextResponse.json({ error: "Image trop lourde (12 Mo max)." }, { status: 400 });
-  }
   if (!pair?.trim()) {
-    return NextResponse.json({ error: "Précisez la paire à analyser (ex : BTC/USDT)." }, { status: 400 });
+    return NextResponse.json({ error: "Précisez l'actif à analyser (ex : BTCUSDT)." }, { status: 400 });
+  }
+  const validImages = (Array.isArray(images) ? images : [])
+    .filter((i) => i && typeof i.dataUrl === "string" && i.dataUrl.startsWith("data:image") && i.dataUrl.length > 5000)
+    .slice(0, 3);
+  if (validImages.length === 0) {
+    return NextResponse.json({ error: "Aucun graphique valide fourni." }, { status: 400 });
+  }
+  const totalSize = validImages.reduce((s, i) => s + i.dataUrl.length, 0);
+  if (totalSize > 24_000_000) {
+    return NextResponse.json({ error: "Images trop lourdes (24 Mo cumulés max)." }, { status: 400 });
   }
 
   const last = typeof lastPrice === "number" && Number.isFinite(lastPrice) && lastPrice > 0 ? lastPrice : null;
-  const userText = `Analyse ce graphique.
+  const trends = Array.isArray(htfTrends) ? htfTrends : [];
+  const conflict = trends.length ? hasTrendConflict(trends) : false;
 
-Paire : ${pair.trim()}
-Timeframe : ${timeframe}
-${last ? `Dernier prix de clôture connu : ${last}` : ""}
-Contexte trader : capital ${capital} $, risque ${riskPercent} % par position.
+  const imageRoles = validImages
+    .map((img, i) => (i === 0 ? `Image ${i + 1} = timeframe d'EXÉCUTION (${img.tf})` : `Image ${i + 1} = TIMEFRAME SUPÉRIEUR (${img.tf})`))
+    .join(" · ");
 
-Lis l'échelle de prix visible sur le graphique (axe de droite) pour donner des niveaux PRÉCIS. Respecte la tendance dominante. Réponds en JSON pur.`;
+  const userText = `Analyse ce marché et construis le plan de trade complet.
+
+ACTIF : ${pair.trim()}
+TIMEFRAME D'EXÉCUTION : ${timeframe}
+${last ? `DERNIER PRIX DE CLÔTURE CONNU : ${last}` : ""}
+PROFIL TRADER : capital ${capital} $, risque ${riskPercent} % par position.
+
+IMAGES FOURNIES (dans l'ordre) : ${imageRoles}
+
+TENDANCES AUTOMATIQUES PAR TIMEFRAME (calcul algorithmique EMA + structure — à confirmer visuellement) :
+${mtfSummary?.trim() || trends.map((t) => `- ${t.tf} : ${t.direction.toUpperCase()} (${t.strength}/100) · ${t.detail}`).join("\n") || "non fournies"}
+${conflict ? "⚠ CONFLIT MULTI-TIMEFRAME DÉTECTÉ : les timeframes ne sont pas alignés — applique la règle A (NEUTRE ou forte prudence)." : ""}
+
+═══ BRIEFING MACRO & INSTITUTIONNEL ═══
+${macro?.summaryText?.trim() || "(non fourni — base-toi uniquement sur le technique et signale l'absence de contexte macro dans alerte_macro)"}
+
+Lis l'échelle de prix à droite des graphiques pour des niveaux PRÉCIS. Respecte toutes les règles absolues (A : confirmation MTF, B : contexte global, C : stratégie adaptative, D : précision). Réponds en JSON pur.`;
+
+  const content: (TextPart | ImagePart)[] = [
+    { type: "text", text: userText },
+    ...validImages.map<ImagePart>((img) => ({ type: "image_url", image_url: { url: img.dataUrl } })),
+  ];
 
   /* ---------- Sélection automatique du modèle ---------- */
   let ai: AiAnalysis | null = null;
@@ -212,10 +270,9 @@ Lis l'échelle de prix visible sur le graphique (axe de droite) pour donner des 
   const MAX_ATTEMPTS = 3;
 
   for (const candidate of MODELS.slice(0, MAX_ATTEMPTS)) {
-    const res = await callModel(apiKey, candidate.id, userText, image);
+    const res = await callModel(apiKey, candidate.id, content);
     if (!res.ok) {
       attempts.push({ model: candidate.id, status: res.status, message: res.message });
-      // Clé refusée → inutile d'essayer les autres modèles.
       if (res.status === 401) {
         return NextResponse.json(
           { error: "Clé API refusée par OpenRouter.", detail: res.message },
@@ -225,7 +282,7 @@ Lis l'échelle de prix visible sur le graphique (axe de droite) pour donner des 
       continue;
     }
     try {
-      ai = normalize(extractJson(res.content));
+      ai = normalize(extractJson(res.content), conflict);
       usedModel = candidate.id;
       break;
     } catch (e) {
@@ -284,6 +341,9 @@ Lis l'échelle de prix visible sur le graphique (axe de droite) pour donner des 
     rr1: rr(ai.direction, ai.entree, ai.stop_loss, ai.tp1),
     rr2: rr(ai.direction, ai.entree, ai.stop_loss, ai.tp2),
     rr3: rr(ai.direction, ai.entree, ai.stop_loss, ai.tp3),
+    htf_trends: trends,
+    macro_events: macro?.events ?? [],
+    macro_headlines: macro?.headlines ?? [],
     createdAt: new Date().toISOString(),
   };
 
@@ -310,6 +370,14 @@ Lis l'échelle de prix visible sur le graphique (axe de droite) pour donner des 
     notional: plan.notional,
     marketSource: plan.marketSource,
     lastPrice: plan.lastPrice,
+    strategie: plan.strategie,
+    regime: plan.regime,
+    confirmationMtf: plan.confirmation_mtf,
+    alerteMacro: plan.alerte_macro,
+    risqueEnv: plan.risque_environnement,
+    htfTrends: plan.htf_trends,
+    macroEvents: plan.macro_events,
+    macroHeadlines: plan.macro_headlines,
     resumerTendance: plan.resumer_tendance,
     contexte: plan.contexte,
     analyse: plan.analyse,
@@ -319,7 +387,7 @@ Lis l'échelle de prix visible sur le graphique (axe de droite) pour donner des 
   };
 
   // Persistance : base utilisateur si fournie, sinon base locale.
-  // La clé API et l'image ne sont JAMAIS stockées.
+  // La clé API et les images ne sont JAMAIS stockées.
   const userConn = dbUrl ? getUserDb(dbUrl) : null;
   try {
     if (userConn) {
