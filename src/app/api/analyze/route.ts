@@ -402,4 +402,5 @@ Lis l'échelle de prix à droite des graphiques pour des niveaux PRÉCIS. Respec
   }
 
   return NextResponse.json(plan);
-}
+            }
+        
