@@ -310,7 +310,15 @@ Lis l'échelle de prix à droite des graphiques pour des niveaux PRÉCIS. Respec
     );
   }
 
-  if (!ai.entree || !ai.stop_loss || ai.entree === ai.stop_loss) {
+  const levelsInvalid = !ai.entree || !ai.stop_loss || ai.entree === ai.stop_loss;
+  if (levelsInvalid && ai.direction === "NEUTRE") {
+    // « Pas de trade » est une réponse valide : on neutralise les niveaux au lieu de renvoyer une erreur.
+    ai.entree = 0;
+    ai.stop_loss = 0;
+    ai.tp1 = 0;
+    ai.tp2 = null;
+    ai.tp3 = null;
+  } else if (levelsInvalid) {
     return NextResponse.json(
       { error: "Plan incomplet : niveaux d'entrée / stop loss illisibles.", detail: "Relancez l'analyse — ou changez de timeframe." },
       { status: 502 },
@@ -402,5 +410,5 @@ Lis l'échelle de prix à droite des graphiques pour des niveaux PRÉCIS. Respec
   }
 
   return NextResponse.json(plan);
-            }
-        
+}
+  
